@@ -12,5 +12,16 @@ public class Db extends SQLiteOpenHelper {
  }
  public Cursor all(){return getReadableDatabase().rawQuery("SELECT id,title,amount,income,category,date,source FROM tx ORDER BY id DESC",null);}
  public double total(boolean income){Cursor c=getReadableDatabase().rawQuery("SELECT COALESCE(SUM(amount),0) FROM tx WHERE income=?",new String[]{income?"1":"0"});double n=0;if(c.moveToFirst())n=c.getDouble(0);c.close();return n;}
+ public double currentMonthExpenses(){
+  String month=new SimpleDateFormat("MMM yyyy",Locale.getDefault()).format(new Date());
+  Cursor c=getReadableDatabase().rawQuery("SELECT COALESCE(SUM(amount),0) FROM tx WHERE income=0 AND date LIKE ?",new String[]{"%"+month+"%"});
+  double n=0;if(c.moveToFirst())n=c.getDouble(0);c.close();return n;
+ }
+ public boolean updateTransaction(long id,String title,double amount,boolean income,String category){
+  if(amount<=0||Double.isNaN(amount)||Double.isInfinite(amount))return false;
+  ContentValues v=new ContentValues();v.put("title",title);v.put("amount",amount);v.put("income",income?1:0);v.put("category",category);
+  return getWritableDatabase().update("tx",v,"id=?",new String[]{String.valueOf(id)})>0;
+ }
+ public void deleteTransaction(long id){getWritableDatabase().delete("tx","id=?",new String[]{String.valueOf(id)});}
  public void deleteAllTransactions(){getWritableDatabase().delete("tx",null,null);}
 }
