@@ -98,7 +98,7 @@ public class TransactionNotificationListener extends NotificationListenerService
     private boolean isIncoming(String s) {
         return containsAny(s, "received ₹", "received rs", "received inr", "you received",
             "money received", "payment received", "amount credited", "credited to",
-            "credited in", "upi credit", "refund successful", "refund received",
+            "credited in", "credited with", "upi credit", "refund successful", "refund received", "received from", "money added",
             "cashback received", "has sent you", "sent you ₹", "paid you");
     }
 
@@ -106,7 +106,7 @@ public class TransactionNotificationListener extends NotificationListenerService
         return containsAny(s, "you paid", "paid ₹", "paid rs", "paid inr",
             "payment successful", "payment of ₹", "payment of rs", "sent ₹",
             "sent rs", "sent inr", "money sent", "amount debited", "debited from",
-            "debited by", "upi debit", "paid to", "purchase successful",
+            "debited by", "debited", "upi debit", "paid to", "purchase successful",
             "successfully paid", "transaction successful");
     }
 
