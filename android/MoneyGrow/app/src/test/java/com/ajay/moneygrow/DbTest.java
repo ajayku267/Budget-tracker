@@ -60,9 +60,29 @@ public class DbTest {
     }
 
     @Test
+    public void transfersAreExcludedFromIncomeAndExpenseTotals() {
+        assertTrue(db.add("Salary", 30000, true, "Salary", "Manual", "salary-transfer-test"));
+        assertTrue(db.add("Rent", 8000, false, "Home", "Manual", "rent-transfer-test"));
+        assertTrue(db.addTransfer(5000, "Current account", "Savings"));
+        assertFalse(db.addTransfer(500, "Savings", " savings "));
+        assertFalse(db.addTransfer(500, "Cash", ""));
+        assertEquals(30000d, db.total(true), 0.001);
+        assertEquals(8000d, db.total(false), 0.001);
+        Cursor c = db.getReadableDatabase().rawQuery(
+                "SELECT is_transfer,transfer_from,transfer_to FROM tx WHERE category='Transfer'", null);
+        try {
+            assertTrue(c.moveToFirst());
+            assertEquals(1, c.getInt(0));
+            assertEquals("Current account", c.getString(1));
+            assertEquals("Savings", c.getString(2));
+        } finally { c.close(); }
+    }
+
+    @Test
     public void backupRoundTripRestoresTransactionsAndFingerprints() throws Exception {
         assertTrue(db.add("Salary", 25000, true, "Salary", "Manual", "salary"));
         assertTrue(db.add("Lunch", 180, false, "Food", "com.example.pay", "payment-1"));
+        assertTrue(db.addTransfer(1000, "Wallet", "Savings"));
 
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         db.writeBackup(output);
@@ -71,9 +91,12 @@ public class DbTest {
         assertTrue(db.add("Temporary", 50, false, "Other", "Manual", "temporary"));
         int restored = db.restoreBackup(new ByteArrayInputStream(output.toByteArray()));
 
-        assertEquals(2, restored);
+        assertEquals(3, restored);
         assertEquals(25000d, db.total(true), 0.001);
         assertEquals(180d, db.total(false), 0.001);
+        Cursor transfer = db.getReadableDatabase().rawQuery("SELECT is_transfer FROM tx WHERE category='Transfer'", null);
+        try { assertTrue(transfer.moveToFirst()); assertEquals(1, transfer.getInt(0)); }
+        finally { transfer.close(); }
         assertFalse(db.add("Duplicate after restore", 180, false, "Food", "com.example.pay", "payment-1"));
     }
 
