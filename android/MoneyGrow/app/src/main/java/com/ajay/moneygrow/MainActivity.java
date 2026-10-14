@@ -426,7 +426,7 @@ public class MainActivity extends Activity {
     private void notificationDialog() {
         new AlertDialog.Builder(this)
             .setTitle("Automatic transaction detection")
-            .setMessage("Notification access is a powerful Android permission. While enabled, Android can deliver notifications from across your device. MoneyGrow filters likely payment alerts and stores a generic label, amount, direction, category, date and app package only. Raw notification text and payee names are not saved, and nothing is uploaded. Detection can miss or misread alerts.")
+            .setMessage("Turn this on to import new UPI/payment alerts from supported apps such as Google Pay, PhonePe, Paytm and participating bank apps. Android only lets MoneyGrow read notifications after you grant access; it cannot directly fetch your UPI or bank history. It will not import past transactions, and alerts that are hidden, disabled or worded differently may be missed. MoneyGrow saves only a generic transaction label, amount, direction, category, date and app package on this phone; it does not save raw notification text or upload data. Review detected entries for mistakes.")
             .setNegativeButton("Not now",null)
             .setPositiveButton("Open settings",(d,w)->startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")))
             .show();
