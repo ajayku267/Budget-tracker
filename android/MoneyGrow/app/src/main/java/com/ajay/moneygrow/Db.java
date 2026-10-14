@@ -5,6 +5,14 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
+import java.util.Set;
 
 import java.text.ParsePosition;
 import java.text.SimpleDateFormat;
@@ -149,6 +157,110 @@ public class Db extends SQLiteOpenHelper {
 
     public void deleteTransaction(long id) {
         getWritableDatabase().delete("tx", "id=?", new String[]{String.valueOf(id)});
+    }
+
+    /** Write a portable, versioned backup without exposing the database file itself. */
+    public synchronized void writeBackup(OutputStream output) throws Exception {
+        JSONObject root = new JSONObject();
+        root.put("formatVersion", 1);
+        root.put("app", "MoneyGrow");
+        root.put("exportedAt", System.currentTimeMillis());
+
+        JSONArray rows = new JSONArray();
+        Cursor c = getReadableDatabase().rawQuery(
+                "SELECT id,title,amount,income,category,date,source,fingerprint,timestamp_ms FROM tx ORDER BY id ASC",
+                null);
+        try {
+            while (c.moveToNext()) {
+                JSONObject row = new JSONObject();
+                row.put("id", c.getLong(0));
+                row.put("title", c.isNull(1) ? "" : c.getString(1));
+                row.put("amount", c.getDouble(2));
+                row.put("income", c.getInt(3));
+                row.put("category", c.isNull(4) ? "Other" : c.getString(4));
+                row.put("date", c.isNull(5) ? "" : c.getString(5));
+                row.put("source", c.isNull(6) ? "Manual" : c.getString(6));
+                if (!c.isNull(7)) row.put("fingerprint", c.getString(7));
+                row.put("timestampMs", c.getLong(8));
+                rows.put(row);
+            }
+        } finally {
+            c.close();
+        }
+        root.put("transactions", rows);
+        output.write(root.toString(2).getBytes(StandardCharsets.UTF_8));
+        output.flush();
+    }
+
+    /**
+     * Restore a validated backup atomically. Existing transactions are replaced
+     * only after the entire file has been read and validated successfully.
+     */
+    public synchronized int restoreBackup(InputStream input) throws Exception {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        byte[] chunk = new byte[8192];
+        int count;
+        while ((count = input.read(chunk)) != -1) {
+            if (buffer.size() + count > 10 * 1024 * 1024) {
+                throw new IllegalArgumentException("Backup is larger than 10 MB.");
+            }
+            buffer.write(chunk, 0, count);
+        }
+
+        JSONObject root = new JSONObject(new String(buffer.toByteArray(), StandardCharsets.UTF_8));
+        if (!"MoneyGrow".equals(root.optString("app")) || root.optInt("formatVersion", -1) != 1) {
+            throw new IllegalArgumentException("This is not a supported MoneyGrow backup.");
+        }
+        JSONArray rows = root.optJSONArray("transactions");
+        if (rows == null || rows.length() > 100000) {
+            throw new IllegalArgumentException("The backup transaction list is invalid.");
+        }
+
+        Set<Long> ids = new HashSet<>();
+        Set<String> fingerprints = new HashSet<>();
+        ContentValues[] values = new ContentValues[rows.length()];
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.getJSONObject(i);
+            long id = row.getLong("id");
+            double amount = row.getDouble("amount");
+            int income = row.getInt("income");
+            long timestamp = row.optLong("timestampMs", 0L);
+            String fingerprint = row.optString("fingerprint", null);
+            if (id <= 0 || !ids.add(id) || amount <= 0 || Double.isNaN(amount) ||
+                    Double.isInfinite(amount) || (income != 0 && income != 1) || timestamp < 0) {
+                throw new IllegalArgumentException("A transaction in the backup is invalid.");
+            }
+            if (fingerprint != null && !fingerprints.add(fingerprint)) {
+                throw new IllegalArgumentException("The backup contains duplicate transaction fingerprints.");
+            }
+
+            ContentValues v = new ContentValues();
+            v.put("id", id);
+            v.put("title", row.optString("title", ""));
+            v.put("amount", amount);
+            v.put("income", income);
+            v.put("category", row.optString("category", "Other"));
+            v.put("date", row.optString("date", ""));
+            v.put("source", row.optString("source", "Manual"));
+            if (fingerprint == null || fingerprint.isEmpty()) v.putNull("fingerprint");
+            else v.put("fingerprint", fingerprint);
+            v.put("timestamp_ms", timestamp);
+            values[i] = v;
+        }
+
+        SQLiteDatabase database = getWritableDatabase();
+        database.beginTransaction();
+        try {
+            database.delete("tx", null, null);
+            for (ContentValues value : values) {
+                long inserted = database.insertOrThrow("tx", null, value);
+                if (inserted < 0) throw new IllegalStateException("Could not restore a transaction.");
+            }
+            database.setTransactionSuccessful();
+        } finally {
+            database.endTransaction();
+        }
+        return values.length;
     }
 
     public void deleteAllTransactions() {
