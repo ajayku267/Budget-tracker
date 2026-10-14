@@ -99,6 +99,16 @@ public class DbTest {
         }
     }
 
+
+    @Test
+    public void importedPaymentsRequireReviewAndCanBeMarkedReviewed() {
+        assertTrue(db.add("UPI payment", 250, false, "UPI · review", "com.example.pay", "import-1"));
+        assertEquals(1, db.pendingReviewCount());
+        assertTrue(db.markReviewed(1));
+        assertEquals(0, db.pendingReviewCount());
+        assertFalse(db.markReviewed(1));
+    }
+
     @Test
     public void migratesVersionOneDatabaseWithoutLosingTransactions() {
         db.close();
