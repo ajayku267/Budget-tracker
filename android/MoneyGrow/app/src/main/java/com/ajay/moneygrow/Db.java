@@ -22,7 +22,7 @@ import java.util.Locale;
 import java.util.TimeZone;
 
 public class Db extends SQLiteOpenHelper {
-    private static final int DATABASE_VERSION = 2;
+    private static final int DATABASE_VERSION = 3;
     private static final String DATE_PATTERN = "dd MMM yyyy, HH:mm";
 
     public Db(Context c) {
@@ -40,7 +40,8 @@ public class Db extends SQLiteOpenHelper {
                 "date TEXT," +
                 "source TEXT," +
                 "fingerprint TEXT UNIQUE," +
-                "timestamp_ms INTEGER NOT NULL DEFAULT 0)");
+                "timestamp_ms INTEGER NOT NULL DEFAULT 0," +
+                "reviewed INTEGER NOT NULL DEFAULT 1)");
     }
 
     @Override
@@ -48,6 +49,9 @@ public class Db extends SQLiteOpenHelper {
         if (oldVersion < 2) {
             d.execSQL("ALTER TABLE tx ADD COLUMN timestamp_ms INTEGER NOT NULL DEFAULT 0");
             backfillLegacyTimestamps(d);
+        }
+        if (oldVersion < 3) {
+            d.execSQL("ALTER TABLE tx ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 1");
         }
     }
 
@@ -98,13 +102,14 @@ public class Db extends SQLiteOpenHelper {
         v.put("source", source == null ? "Manual" : source);
         v.put("fingerprint", fingerprint);
         v.put("timestamp_ms", System.currentTimeMillis());
+        v.put("reviewed", source == null || "Manual".equalsIgnoreCase(source) ? 1 : 0);
         return getWritableDatabase().insertWithOnConflict(
                 "tx", null, v, SQLiteDatabase.CONFLICT_IGNORE) != -1;
     }
 
     public Cursor all() {
         return getReadableDatabase().rawQuery(
-                "SELECT id,title,amount,income,category,date,source FROM tx ORDER BY id DESC", null);
+                "SELECT id,title,amount,income,category,date,source,reviewed FROM tx ORDER BY id DESC", null);
     }
 
     public double total(boolean income) {
@@ -152,7 +157,20 @@ public class Db extends SQLiteOpenHelper {
         v.put("amount", amount);
         v.put("income", income ? 1 : 0);
         v.put("category", category == null ? "Other" : category);
+        v.put("reviewed", 1);
         return getWritableDatabase().update("tx", v, "id=?", new String[]{String.valueOf(id)}) > 0;
+    }
+
+    public boolean markReviewed(long id) {
+        ContentValues values = new ContentValues();
+        values.put("reviewed", 1);
+        return getWritableDatabase().update("tx", values, "id=? AND reviewed=0", new String[]{String.valueOf(id)}) > 0;
+    }
+
+    public int pendingReviewCount() {
+        Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM tx WHERE reviewed=0", null);
+        try { return c.moveToFirst() ? c.getInt(0) : 0; }
+        finally { c.close(); }
     }
 
     public void deleteTransaction(long id) {
@@ -168,7 +186,7 @@ public class Db extends SQLiteOpenHelper {
 
         JSONArray rows = new JSONArray();
         Cursor c = getReadableDatabase().rawQuery(
-                "SELECT id,title,amount,income,category,date,source,fingerprint,timestamp_ms FROM tx ORDER BY id ASC",
+                "SELECT id,title,amount,income,category,date,source,fingerprint,timestamp_ms,reviewed FROM tx ORDER BY id ASC",
                 null);
         try {
             while (c.moveToNext()) {
@@ -182,6 +200,7 @@ public class Db extends SQLiteOpenHelper {
                 row.put("source", c.isNull(6) ? "Manual" : c.getString(6));
                 if (!c.isNull(7)) row.put("fingerprint", c.getString(7));
                 row.put("timestampMs", c.getLong(8));
+                row.put("reviewed", c.getInt(9));
                 rows.put(row);
             }
         } finally {
@@ -245,6 +264,9 @@ public class Db extends SQLiteOpenHelper {
             if (fingerprint == null || fingerprint.isEmpty()) v.putNull("fingerprint");
             else v.put("fingerprint", fingerprint);
             v.put("timestamp_ms", timestamp);
+            int reviewed = row.optInt("reviewed", 1);
+            if (reviewed != 0 && reviewed != 1) throw new IllegalArgumentException("A transaction review status is invalid.");
+            v.put("reviewed", reviewed);
             values[i] = v;
         }
 
