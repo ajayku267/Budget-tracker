@@ -68,6 +68,7 @@ public class DbTest {
         assertFalse(db.addTransfer(500, "Cash", ""));
         assertEquals(30000d, db.total(true), 0.001);
         assertEquals(8000d, db.total(false), 0.001);
+        assertEquals(8000d, db.currentMonthExpenses(), 0.001);
         Cursor c = db.getReadableDatabase().rawQuery(
                 "SELECT is_transfer,transfer_from,transfer_to FROM tx WHERE category='Transfer'", null);
         try {
