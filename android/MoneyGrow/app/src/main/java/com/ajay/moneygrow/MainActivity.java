@@ -597,7 +597,7 @@ public class MainActivity extends Activity {
         privacy.addView(label("MoneyGrow stores transactions in a local database on this phone. It has no account, cloud sync, analytics or internet permission.",12,muted));gap(privacy,14);
         addSettingAction(privacy,"Notification access","Optional payment alert detection","Manage",()->notificationDialog());
         divider(privacy);
-        addSettingAction(privacy,"Back up transactions","Save an encrypted-by-you file wherever you choose","Export",()->createBackup());
+        addSettingAction(privacy,"Back up transactions","Save a portable JSON file wherever you choose","Export",()->createBackup());
         divider(privacy);
         addSettingAction(privacy,"Restore transactions","Replace this phone's transaction list from a backup","Import",()->chooseBackup());
         divider(privacy);
@@ -693,7 +693,7 @@ public class MainActivity extends Activity {
                 db.writeBackup(output);
                 new AlertDialog.Builder(this)
                     .setTitle("Backup created")
-                    .setMessage("Your transaction backup was saved. Keep it somewhere safe; anyone with the file may be able to read its contents.")
+                    .setMessage("Your transaction backup was saved as plain JSON, not encrypted. Anyone with the file may be able to read it, so keep it somewhere private and secure.")
                     .setPositiveButton("OK", null).show();
             } catch (Exception e) {
                 showBackupError("Could not create the backup. Please choose another location and try again.");
