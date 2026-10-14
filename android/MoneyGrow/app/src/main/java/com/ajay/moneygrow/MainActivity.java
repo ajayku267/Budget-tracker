@@ -176,6 +176,7 @@ public class MainActivity extends Activity {
         actions.addView(auto,new LinearLayout.LayoutParams(0,dp(50),1));
         content.addView(actions); gap(content,26);
 
+        buildBudgetCard(); gap(content,22);
         sectionHeader(content,"Recent activity","See all",() -> {activeTab=1;render();});
         addTransactionRows(content,5,"");
         gap(content,20);
@@ -188,6 +189,107 @@ public class MainActivity extends Activity {
         refreshTotals();
     }
 
+
+    private void buildBudgetCard() {
+        LinearLayout budget=card();
+        LinearLayout header=row(), labels=column();
+        labels.addView(bold("Monthly spending plan",16,ink));
+        gap(labels,4); labels.addView(label("Keep this month's expenses in check.",12,muted));
+        header.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
+        TextView edit=pill("Set budget",softGreen,green);
+        edit.setOnClickListener(v->budgetDialog()); header.addView(edit);
+        budget.addView(header); gap(budget,16);
+        double limit=getPreferences(MODE_PRIVATE).getFloat("monthly_budget",0f);
+        double spent=db.currentMonthExpenses();
+        LinearLayout amounts=row(), spentCol=column(), limitCol=column();
+        spentCol.addView(label("SPENT THIS MONTH",10,muted));
+        spentCol.addView(bold(money.format(spent),18,ink));
+        limitCol.setGravity(Gravity.RIGHT);
+        limitCol.addView(label("MONTHLY LIMIT",10,muted));
+        limitCol.addView(bold(limit>0?money.format(limit):"Not set",16,ink));
+        amounts.addView(spentCol,new LinearLayout.LayoutParams(0,-2,1)); amounts.addView(limitCol);
+        budget.addView(amounts); gap(budget,12);
+        if(limit>0) {
+            android.widget.FrameLayout frame=new android.widget.FrameLayout(this);
+            frame.setBackground(shape(softRed,20));
+            int maxWidth=getResources().getDisplayMetrics().widthPixels-dp(80);
+            int fillWidth=(int)(Math.max(0,Math.min(1,spent/limit))*maxWidth);
+            View fill=new View(this); fill.setBackground(shape(spent>limit?Color.rgb(196,83,77):green,20));
+            frame.addView(fill,new android.widget.FrameLayout.LayoutParams(fillWidth,dp(8),Gravity.LEFT));
+            budget.addView(frame,lp(-1,8)); gap(budget,8);
+            double remaining=limit-spent;
+            budget.addView(label(remaining>=0?money.format(remaining)+" left to spend":money.format(-remaining)+" over budget",12,remaining>=0?green:Color.rgb(196,83,77)));
+        } else budget.addView(label("Set a monthly limit to see your spending progress.",12,muted));
+        content.addView(budget);
+    }
+
+    private void budgetDialog() {
+        EditText amount=new EditText(this); amount.setSingleLine(true);
+        amount.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL); amount.setHint("Monthly limit in ₹");
+        float current=getPreferences(MODE_PRIVATE).getFloat("monthly_budget",0f); if(current>0) amount.setText(String.valueOf(current));
+        LinearLayout box=column(); pad(box,4,4,4,0); box.addView(amount);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Set monthly budget").setMessage("Your budget stays on this phone.").setView(box)
+            .setNegativeButton("Cancel",null).setNeutralButton("Remove",null).setPositiveButton("Save",null).create();
+        dialog.setOnShowListener(v->{
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b->{
+                try {
+                    double value=Double.parseDouble(amount.getText().toString().trim());
+                    if(value<=0||Double.isInfinite(value)||Double.isNaN(value)||value>1000000000){amount.setError("Enter a valid budget");return;}
+                    getPreferences(MODE_PRIVATE).edit().putFloat("monthly_budget",(float)value).apply(); dialog.dismiss(); render();
+                } catch(Exception e){amount.setError("Enter a valid budget");}
+            });
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(b->{getPreferences(MODE_PRIVATE).edit().remove("monthly_budget").apply();dialog.dismiss();render();});
+        });
+        dialog.show();
+    }
+
+    private void exportCsv() {
+        Cursor c=db.all(); StringBuilder csv=new StringBuilder("Date,Title,Amount,Type,Category,Source\n");
+        try {
+            while(c.moveToNext()) {
+                String title=c.getString(1), category=c.getString(4), date=c.getString(5), source=c.getString(6);
+                csv.append(csvCell(date)).append(',').append(csvCell(title)).append(',')
+                    .append(String.format(Locale.US,"%.2f",c.getDouble(2))).append(',')
+                    .append(c.getInt(3)==1?"Income":"Expense").append(',')
+                    .append(csvCell(category)).append(',').append(csvCell(source)).append('\n');
+            }
+        } finally { c.close(); }
+        Intent share=new Intent(Intent.ACTION_SEND); share.setType("text/csv");
+        share.putExtra(Intent.EXTRA_SUBJECT,"MoneyGrow transactions"); share.putExtra(Intent.EXTRA_TEXT,csv.toString());
+        startActivity(Intent.createChooser(share,"Export transactions"));
+    }
+
+    private String csvCell(String value) {
+        if(value==null)return "\"\"";
+        return "\"" + value.replace("\"","\"\"") + "\"";
+    }
+
+    private void transactionActions(long id,String title,double amount,boolean income,String category) {
+        new AlertDialog.Builder(this).setTitle(title).setItems(new String[]{"Edit transaction","Delete transaction"},(dialog,which)->{
+            if(which==0) editTransactionDialog(id,title,amount,income,category);
+            else new AlertDialog.Builder(this).setTitle("Delete transaction?").setMessage("This removes only this entry from this phone.")
+                .setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->{db.deleteTransaction(id);render();}).show();
+        }).show();
+    }
+
+    private void editTransactionDialog(long id,String oldTitle,double oldAmount,boolean oldIncome,String oldCategory) {
+        LinearLayout form=column(); pad(form,4,4,4,0);
+        EditText title=new EditText(this); title.setSingleLine(true); title.setHint("What was it for?"); title.setText(oldTitle); form.addView(title);
+        EditText amount=new EditText(this); amount.setSingleLine(true); amount.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL); amount.setText(String.valueOf(oldAmount)); form.addView(amount);
+        EditText category=new EditText(this); category.setSingleLine(true); category.setHint("Category"); category.setText(oldCategory); form.addView(category);
+        Switch sw=new Switch(this); sw.setText("Money coming in"); sw.setTextColor(ink); sw.setChecked(oldIncome); form.addView(sw);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Edit transaction").setView(form).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
+        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b->{
+            double value;
+            try{value=Double.parseDouble(amount.getText().toString().trim());}catch(Exception e){amount.setError("Enter a valid amount");return;}
+            if(value<=0||Double.isInfinite(value)||Double.isNaN(value)){amount.setError("Amount must be greater than zero");return;}
+            String name=title.getText().toString().trim(); if(name.isEmpty()){title.setError("Add a description");return;}
+            String cat=category.getText().toString().trim(); if(cat.isEmpty())cat="Uncategorised";
+            db.updateTransaction(id,name,value,sw.isChecked(),cat); dialog.dismiss(); render();
+        }));
+        dialog.show();
+    }
+
     private void buildActivity() {
         buildTop("Your money timeline","Activity","Every transaction, all in one place.");
         searchBox = new EditText(this);
@@ -195,7 +297,7 @@ public class MainActivity extends Activity {
         searchBox.setHintTextColor(muted); searchBox.setHint("⌕   Search transactions");
         searchBox.setBackground(strokeShape(surface,16,line)); pad(searchBox,14,4,14,4);
         searchBox.setText(searchQuery); content.addView(searchBox,lp(-1,48)); gap(content,20);
-        sectionHeader(content,"All transactions",null,null);
+        sectionHeader(content,"All transactions","Export CSV",()->exportCsv());
         addTransactionRows(content,Integer.MAX_VALUE,searchQuery);
         searchBox.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s,int st,int count,int after){}
@@ -214,6 +316,7 @@ public class MainActivity extends Activity {
         Cursor c = db.all(); int count=0;
         try {
             while(c.moveToNext() && count<limit) {
+                long transactionId=c.getLong(0);
                 String title=c.getString(1), category=c.getString(4), date=c.getString(5);
                 double amount=c.getDouble(2); boolean isIncome=c.getInt(3)==1;
                 if (query != null && !query.trim().isEmpty()) {
@@ -234,6 +337,7 @@ public class MainActivity extends Activity {
                 amt.addView(bold((isIncome?"+":"−")+money.format(amount),13,isIncome?green:ink));
                 gap(amt,4); amt.addView(label(isIncome?"Income":"Expense",10,muted));
                 item.addView(amt);
+                item.setOnClickListener(v -> transactionActions(transactionId,title,amount,isIncome,category));
                 wrap.addView(item); count++;
             }
         } finally { c.close(); }
@@ -260,8 +364,8 @@ public class MainActivity extends Activity {
     private void buildSettings() {
         buildTop("Make it yours","Settings","Simple controls. Private by design.");
         LinearLayout appearance=card();
-        appearance.addView(bold("Appearance",16,ink));gap(6);
-        appearance.addView(label("Choose the look that feels right.",12,muted));gap(14);
+        appearance.addView(bold("Appearance",16,ink));gap(appearance,6);
+        appearance.addView(label("Choose the look that feels right.",12,muted));gap(appearance,14);
         LinearLayout mode=row();
         LinearLayout light=column();light.setGravity(Gravity.CENTER);pad(light,8,12,8,12);
         light.setBackground(strokeShape(!dark?softGreen:surface,14,!dark?green:line));
@@ -272,15 +376,15 @@ public class MainActivity extends Activity {
         mode.addView(light,new LinearLayout.LayoutParams(0,-2,1));View gap=new View(this);mode.addView(gap,lp(10,1));mode.addView(night,new LinearLayout.LayoutParams(0,-2,1));appearance.addView(mode);
         content.addView(appearance);gap(content,14);
 
-        LinearLayout privacy=card();privacy.addView(bold("Privacy & permissions",16,ink));gap(5);
-        privacy.addView(label("MoneyGrow stores transactions in a local database on this phone. It has no account, cloud sync, analytics or internet permission.",12,muted));gap(14);
+        LinearLayout privacy=card();privacy.addView(bold("Privacy & permissions",16,ink));gap(privacy,5);
+        privacy.addView(label("MoneyGrow stores transactions in a local database on this phone. It has no account, cloud sync, analytics or internet permission.",12,muted));gap(privacy,14);
         addSettingAction(privacy,"Notification access","Optional payment alert detection","Manage",()->notificationDialog());
         divider(privacy);
         addSettingAction(privacy,"Delete transaction history","Permanently remove all saved entries","Delete",()->deleteDialog());
         content.addView(privacy);gap(content,14);
 
-        LinearLayout about=card();about.addView(bold("About MoneyGrow",16,ink));gap(7);
-        about.addView(label("Version 1.0 · Local-first finance tracker",12,muted));gap(12);
+        LinearLayout about=card();about.addView(bold("About MoneyGrow",16,ink));gap(about,7);
+        about.addView(label("Version 1.0 · Local-first finance tracker",12,muted));gap(about,12);
         about.addView(label("Automatic detection is best-effort. Always review imported transactions for accuracy.",12,muted));
         content.addView(about);gap(content,18);
         TextView footer=label("MADE FOR YOUR FINANCIAL CLARITY",10,muted);footer.setGravity(Gravity.CENTER);footer.setLetterSpacing(.12f);content.addView(footer);
