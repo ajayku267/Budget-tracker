@@ -272,11 +272,20 @@ public class MainActivity extends Activity {
         return "\"" + value.replace("\"","\"\"") + "\"";
     }
 
-    private void transactionActions(long id,String title,double amount,boolean income,String category) {
-        new AlertDialog.Builder(this).setTitle(title).setItems(new String[]{"Edit transaction","Delete transaction"},(dialog,which)->{
-            if(which==0) editTransactionDialog(id,title,amount,income,category);
-            else new AlertDialog.Builder(this).setTitle("Delete transaction?").setMessage("This removes only this entry from this phone.")
-                .setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->{db.deleteTransaction(id);render();}).show();
+    private void transactionActions(long id,String title,double amount,boolean income,String category,boolean needsReview) {
+        String[] actions = needsReview
+                ? new String[]{"Mark as reviewed","Edit transaction","Delete transaction"}
+                : new String[]{"Edit transaction","Delete transaction"};
+        new AlertDialog.Builder(this).setTitle(title).setItems(actions,(dialog,which)->{
+            if (needsReview && which == 0) {
+                db.markReviewed(id);
+                render();
+            } else {
+                int action = needsReview ? which - 1 : which;
+                if(action==0) editTransactionDialog(id,title,amount,income,category);
+                else new AlertDialog.Builder(this).setTitle("Delete transaction?").setMessage("This removes only this entry from this phone.")
+                    .setNegativeButton("Cancel",null).setPositiveButton("Delete",(d,w)->{db.deleteTransaction(id);render();}).show();
+            }
         }).show();
     }
 
@@ -317,6 +326,18 @@ public class MainActivity extends Activity {
             filters.addView(chip,cp);
         }
         content.addView(filters);gap(content,18);
+        int pendingReviews = db.pendingReviewCount();
+        if (pendingReviews > 0) {
+            LinearLayout review = row();
+            review.setBackground(shape(softGreen,14)); pad(review,12,10,12,10);
+            TextView mark = bold("!",16,green); review.addView(mark);
+            View reviewSpace = new View(this); review.addView(reviewSpace,lp(8,1));
+            LinearLayout reviewText = column();
+            reviewText.addView(bold(pendingReviews + " payment alert(s) to review",13,ink));
+            gap(reviewText,3);
+            reviewText.addView(label("Check imported entries for mistakes.",11,muted));
+            review.addView(reviewText); content.addView(review); gap(content,12);
+        }
         sectionHeader(content,"All transactions","Export CSV",()->exportCsv());
         addTransactionRows(content,Integer.MAX_VALUE,searchQuery);
         searchBox.addTextChangedListener(new TextWatcher() {
@@ -339,6 +360,7 @@ public class MainActivity extends Activity {
                 long transactionId=c.getLong(0);
                 String title=c.getString(1), category=c.getString(4), date=c.getString(5);
                 double amount=c.getDouble(2); boolean isIncome=c.getInt(3)==1;
+                boolean needsReview = c.getColumnCount() > 7 && c.getInt(7) == 0;
                 if(activeTab==1 && activityFilter==1 && isIncome) continue;
                 if(activeTab==1 && activityFilter==2 && !isIncome) continue;
                 if (query != null && !query.trim().isEmpty()) {
@@ -353,13 +375,13 @@ public class MainActivity extends Activity {
                 View space=new View(this);item.addView(space,lp(12,1));
                 LinearLayout detail=column();
                 detail.addView(bold(title,14,ink)); gap(detail,4);
-                detail.addView(label(category+"  ·  "+date,11,muted));
+                detail.addView(label(category+"  ·  "+date+(needsReview ? "  ·  REVIEW" : ""),11,needsReview?green:muted));
                 item.addView(detail,new LinearLayout.LayoutParams(0,-2,1));
                 LinearLayout amt=column(); amt.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
                 amt.addView(bold((isIncome?"+":"−")+money.format(amount),13,isIncome?green:ink));
                 gap(amt,4); amt.addView(label(isIncome?"Income":"Expense",10,muted));
                 item.addView(amt);
-                item.setOnClickListener(v -> transactionActions(transactionId,title,amount,isIncome,category));
+                item.setOnClickListener(v -> transactionActions(transactionId,title,amount,isIncome,category,needsReview));
                 wrap.addView(item); count++;
             }
         } finally { c.close(); }
