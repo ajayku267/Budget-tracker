@@ -22,7 +22,7 @@ import java.util.Locale;
 import java.util.TimeZone;
 
 public class Db extends SQLiteOpenHelper {
-    private static final int DATABASE_VERSION = 3;
+    private static final int DATABASE_VERSION = 4;
     private static final String DATE_PATTERN = "dd MMM yyyy, HH:mm";
 
     public Db(Context c) {
@@ -41,7 +41,10 @@ public class Db extends SQLiteOpenHelper {
                 "source TEXT," +
                 "fingerprint TEXT UNIQUE," +
                 "timestamp_ms INTEGER NOT NULL DEFAULT 0," +
-                "reviewed INTEGER NOT NULL DEFAULT 1)");
+                "reviewed INTEGER NOT NULL DEFAULT 1," +
+                "is_transfer INTEGER NOT NULL DEFAULT 0," +
+                "transfer_from TEXT," +
+                "transfer_to TEXT)");
     }
 
     @Override
@@ -52,6 +55,11 @@ public class Db extends SQLiteOpenHelper {
         }
         if (oldVersion < 3) {
             d.execSQL("ALTER TABLE tx ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 1");
+        }
+        if (oldVersion < 4) {
+            d.execSQL("ALTER TABLE tx ADD COLUMN is_transfer INTEGER NOT NULL DEFAULT 0");
+            d.execSQL("ALTER TABLE tx ADD COLUMN transfer_from TEXT");
+            d.execSQL("ALTER TABLE tx ADD COLUMN transfer_to TEXT");
         }
     }
 
@@ -103,18 +111,19 @@ public class Db extends SQLiteOpenHelper {
         v.put("fingerprint", fingerprint);
         v.put("timestamp_ms", System.currentTimeMillis());
         v.put("reviewed", source == null || "Manual".equalsIgnoreCase(source) ? 1 : 0);
+        v.put("is_transfer", 0);
         return getWritableDatabase().insertWithOnConflict(
                 "tx", null, v, SQLiteDatabase.CONFLICT_IGNORE) != -1;
     }
 
     public Cursor all() {
         return getReadableDatabase().rawQuery(
-                "SELECT id,title,amount,income,category,date,source,reviewed FROM tx ORDER BY id DESC", null);
+                "SELECT id,title,amount,income,category,date,source,reviewed,is_transfer,transfer_from,transfer_to FROM tx ORDER BY id DESC", null);
     }
 
     public double total(boolean income) {
         Cursor c = getReadableDatabase().rawQuery(
-                "SELECT COALESCE(SUM(amount),0) FROM tx WHERE income=?",
+                "SELECT COALESCE(SUM(amount),0) FROM tx WHERE income=? AND is_transfer=0",
                 new String[]{income ? "1" : "0"});
         try {
             return c.moveToFirst() ? c.getDouble(0) : 0d;
@@ -139,7 +148,7 @@ public class Db extends SQLiteOpenHelper {
         String month = new SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(new Date());
         Cursor c = getReadableDatabase().rawQuery(
                 "SELECT COALESCE(SUM(amount),0) FROM tx " +
-                        "WHERE income=0 AND (" +
+                        "WHERE income=0 AND is_transfer=0 AND (" +
                         "(timestamp_ms>=? AND timestamp_ms<?) OR " +
                         "(timestamp_ms=0 AND date LIKE ?))",
                 new String[]{String.valueOf(startMs), String.valueOf(endMs), "%" + month + "%"});
@@ -158,7 +167,28 @@ public class Db extends SQLiteOpenHelper {
         v.put("income", income ? 1 : 0);
         v.put("category", category == null ? "Other" : category);
         v.put("reviewed", 1);
-        return getWritableDatabase().update("tx", v, "id=?", new String[]{String.valueOf(id)}) > 0;
+        return getWritableDatabase().update("tx", v, "id=? AND is_transfer=0", new String[]{String.valueOf(id)}) > 0;
+    }
+
+    public synchronized boolean addTransfer(double amount, String from, String to) {
+        if (amount <= 0 || Double.isNaN(amount) || Double.isInfinite(amount)) return false;
+        String source = from == null ? "" : from.trim();
+        String destination = to == null ? "" : to.trim();
+        if (source.isEmpty() || destination.isEmpty() || source.equalsIgnoreCase(destination)) return false;
+        ContentValues v = new ContentValues();
+        v.put("title", "Transfer · " + source + " → " + destination);
+        v.put("amount", amount);
+        v.put("income", 0);
+        v.put("category", "Transfer");
+        v.put("date", new SimpleDateFormat(DATE_PATTERN, Locale.getDefault()).format(new Date()));
+        v.put("source", "Manual transfer");
+        v.put("fingerprint", "transfer|" + System.currentTimeMillis() + "|" + java.util.UUID.randomUUID());
+        v.put("timestamp_ms", System.currentTimeMillis());
+        v.put("reviewed", 1);
+        v.put("is_transfer", 1);
+        v.put("transfer_from", source);
+        v.put("transfer_to", destination);
+        return getWritableDatabase().insertOrThrow("tx", null, v) != -1;
     }
 
     public boolean markReviewed(long id) {
@@ -186,7 +216,7 @@ public class Db extends SQLiteOpenHelper {
 
         JSONArray rows = new JSONArray();
         Cursor c = getReadableDatabase().rawQuery(
-                "SELECT id,title,amount,income,category,date,source,fingerprint,timestamp_ms,reviewed FROM tx ORDER BY id ASC",
+                "SELECT id,title,amount,income,category,date,source,fingerprint,timestamp_ms,reviewed,is_transfer,transfer_from,transfer_to FROM tx ORDER BY id ASC",
                 null);
         try {
             while (c.moveToNext()) {
@@ -201,6 +231,9 @@ public class Db extends SQLiteOpenHelper {
                 if (!c.isNull(7)) row.put("fingerprint", c.getString(7));
                 row.put("timestampMs", c.getLong(8));
                 row.put("reviewed", c.getInt(9));
+                row.put("isTransfer", c.getInt(10));
+                if (!c.isNull(11)) row.put("transferFrom", c.getString(11));
+                if (!c.isNull(12)) row.put("transferTo", c.getString(12));
                 rows.put(row);
             }
         } finally {
@@ -267,6 +300,15 @@ public class Db extends SQLiteOpenHelper {
             int reviewed = row.optInt("reviewed", 1);
             if (reviewed != 0 && reviewed != 1) throw new IllegalArgumentException("A transaction review status is invalid.");
             v.put("reviewed", reviewed);
+            int isTransfer = row.optInt("isTransfer", 0);
+            if (isTransfer != 0 && isTransfer != 1) throw new IllegalArgumentException("A transfer flag is invalid.");
+            String transferFrom = row.optString("transferFrom", "");
+            String transferTo = row.optString("transferTo", "");
+            if (isTransfer == 1 && (transferFrom.trim().isEmpty() || transferTo.trim().isEmpty() || transferFrom.equalsIgnoreCase(transferTo) || income != 0)) {
+                throw new IllegalArgumentException("A transfer in the backup is invalid.");
+            }
+            v.put("is_transfer", isTransfer);
+            if (isTransfer == 1) { v.put("transfer_from", transferFrom); v.put("transfer_to", transferTo); }
             values[i] = v;
         }
 
