@@ -15,8 +15,14 @@ import android.text.Editable;
 import android.text.TextWatcher;
 import java.text.NumberFormat;
 import java.util.Locale;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 public class MainActivity extends Activity {
+    private static final int REQUEST_CREATE_BACKUP = 7101;
+    private static final int REQUEST_RESTORE_BACKUP = 7102;
     private Db db;
     private LinearLayout page, content, nav;
     private TextView balance, incomeValue, expenseValue;
@@ -533,6 +539,10 @@ public class MainActivity extends Activity {
         privacy.addView(label("MoneyGrow stores transactions in a local database on this phone. It has no account, cloud sync, analytics or internet permission.",12,muted));gap(privacy,14);
         addSettingAction(privacy,"Notification access","Optional payment alert detection","Manage",()->notificationDialog());
         divider(privacy);
+        addSettingAction(privacy,"Back up transactions","Save an encrypted-by-you file wherever you choose","Export",()->createBackup());
+        divider(privacy);
+        addSettingAction(privacy,"Restore transactions","Replace this phone's transaction list from a backup","Import",()->chooseBackup());
+        divider(privacy);
         addSettingAction(privacy,"Delete transaction history","Permanently remove all saved entries","Delete",()->deleteDialog());
         content.addView(privacy);gap(content,14);
 
@@ -591,6 +601,81 @@ public class MainActivity extends Activity {
             .setNegativeButton("Cancel",null)
             .setPositiveButton("Delete all",(d,w)->{db.deleteAllTransactions();render();})
             .show();
+    }
+
+
+    private void createBackup() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.putExtra(Intent.EXTRA_TITLE, "MoneyGrow-backup.json");
+        startActivityForResult(intent, REQUEST_CREATE_BACKUP);
+    }
+
+    private void chooseBackup() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        startActivityForResult(intent, REQUEST_RESTORE_BACKUP);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (requestCode == REQUEST_CREATE_BACKUP) {
+            try (OutputStream output = getContentResolver().openOutputStream(data.getData(), "wt")) {
+                if (output == null) throw new IllegalStateException("Could not open the selected backup destination.");
+                db.writeBackup(output);
+                new AlertDialog.Builder(this)
+                    .setTitle("Backup created")
+                    .setMessage("Your transaction backup was saved. Keep it somewhere safe; anyone with the file may be able to read its contents.")
+                    .setPositiveButton("OK", null).show();
+            } catch (Exception e) {
+                showBackupError("Could not create the backup. Please choose another location and try again.");
+            }
+        } else if (requestCode == REQUEST_RESTORE_BACKUP) {
+            byte[] backup;
+            try (InputStream input = getContentResolver().openInputStream(data.getData())) {
+                if (input == null) throw new IllegalStateException("Could not open the selected file.");
+                ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                byte[] chunk = new byte[8192];
+                int count;
+                while ((count = input.read(chunk)) != -1) {
+                    if (buffer.size() + count > 10 * 1024 * 1024) {
+                        throw new IllegalArgumentException("Backup is larger than 10 MB.");
+                    }
+                    buffer.write(chunk, 0, count);
+                }
+                backup = buffer.toByteArray();
+            } catch (Exception e) {
+                showBackupError("Could not read this backup. Select a valid MoneyGrow JSON backup under 10 MB.");
+                return;
+            }
+
+            final byte[] selectedBackup = backup;
+            new AlertDialog.Builder(this)
+                .setTitle("Replace saved transactions?")
+                .setMessage("Restoring replaces every transaction currently stored on this phone. This cannot be undone. Create a backup of your current data first if you may need it.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Restore", (dialog, which) -> {
+                    try {
+                        int restored = db.restoreBackup(new ByteArrayInputStream(selectedBackup));
+                        render();
+                        new AlertDialog.Builder(this)
+                            .setTitle("Restore complete")
+                            .setMessage(restored + " transaction(s) restored.")
+                            .setPositiveButton("OK", null).show();
+                    } catch (Exception e) {
+                        showBackupError("This file is invalid or unsupported. Your existing transactions were not changed.");
+                    }
+                }).show();
+        }
+    }
+
+    private void showBackupError(String message) {
+        new AlertDialog.Builder(this).setTitle("Backup problem").setMessage(message)
+            .setPositiveButton("OK", null).show();
     }
 
     private void addDialog() {
