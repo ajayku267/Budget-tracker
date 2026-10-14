@@ -115,6 +115,7 @@ public class MainActivity extends Activity {
 
         if (activeTab == 0) buildHome();
         else if (activeTab == 1) buildActivity();
+        else if (activeTab == 2) buildInsights();
         else buildSettings();
         buildNav();
     }
@@ -361,6 +362,143 @@ public class MainActivity extends Activity {
         return "₹";
     }
 
+    private void buildInsights() {
+        buildTop("Understand your habits","Insights","A clearer view of this month's money.");
+        String month = new java.text.SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(new java.util.Date());
+        double monthIncome = 0, monthExpense = 0;
+        java.util.HashMap<String,Double> categories = new java.util.HashMap<>();
+        double[] daily = new double[7];
+        String[] dayNames = new String[7];
+        java.text.SimpleDateFormat parser = new java.text.SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault());
+        java.text.SimpleDateFormat dayFmt = new java.text.SimpleDateFormat("EEE", Locale.getDefault());
+        java.util.Calendar today = java.util.Calendar.getInstance();
+        today.set(java.util.Calendar.HOUR_OF_DAY,0); today.set(java.util.Calendar.MINUTE,0);
+        today.set(java.util.Calendar.SECOND,0); today.set(java.util.Calendar.MILLISECOND,0);
+        long todayMs = today.getTimeInMillis();
+        for (int i=0;i<7;i++) {
+            java.util.Calendar d=(java.util.Calendar)today.clone(); d.add(java.util.Calendar.DAY_OF_YEAR,i-6);
+            dayNames[i]=dayFmt.format(d.getTime());
+        }
+        android.database.Cursor c = db.all();
+        try {
+            while(c.moveToNext()) {
+                String dateText=c.getString(5);
+                double amount=c.getDouble(2);
+                boolean income=c.getInt(3)==1;
+                String category=c.getString(4);
+                if(dateText!=null && dateText.contains(month)) {
+                    if(income) monthIncome+=amount;
+                    else {
+                        monthExpense+=amount;
+                        String cat=(category==null||category.trim().isEmpty())?"Uncategorised":category;
+                        categories.put(cat,categories.containsKey(cat)?categories.get(cat)+amount:amount);
+                    }
+                }
+                try {
+                    java.util.Date parsed=parser.parse(dateText);
+                    if(parsed!=null) {
+                        java.util.Calendar day=java.util.Calendar.getInstance(); day.setTime(parsed);
+                        day.set(java.util.Calendar.HOUR_OF_DAY,0);day.set(java.util.Calendar.MINUTE,0);
+                        day.set(java.util.Calendar.SECOND,0);day.set(java.util.Calendar.MILLISECOND,0);
+                        long diff=(todayMs-day.getTimeInMillis())/86400000L;
+                        if(diff>=0&&diff<7&&!income) daily[6-(int)diff]+=amount;
+                    }
+                } catch(Exception ignored) {}
+            }
+        } finally { c.close(); }
+
+        LinearLayout monthCard=column();
+        monthCard.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            new int[]{Color.rgb(25,112,73),Color.rgb(19,82,57)}));
+        ((GradientDrawable)monthCard.getBackground()).setCornerRadius(dp(24));
+        pad(monthCard,18,18,18,18);
+        LinearLayout heading=row();
+        TextView eyebrow=label("MONTHLY SNAPSHOT",10,Color.rgb(207,235,217));eyebrow.setLetterSpacing(.12f);
+        heading.addView(eyebrow,new LinearLayout.LayoutParams(0,-2,1));
+        heading.addView(pill(month,Color.rgb(45,128,88),Color.WHITE));
+        monthCard.addView(heading);gap(monthCard,16);
+        monthCard.addView(label("Net this month",12,Color.rgb(207,235,217)));gap(monthCard,3);
+        monthCard.addView(bold(money.format(monthIncome-monthExpense),30,Color.WHITE));gap(monthCard,16);
+        View rule=new View(this);rule.setBackgroundColor(0x44ffffff);monthCard.addView(rule,lp(-1,1));gap(monthCard,14);
+        LinearLayout metrics=row();
+        LinearLayout inc=column(), exp=column(), rate=column();
+        inc.addView(label("INCOME",10,Color.rgb(207,235,217)));inc.addView(bold(money.format(monthIncome),14,Color.WHITE));
+        exp.addView(label("SPENT",10,Color.rgb(207,235,217)));exp.addView(bold(money.format(monthExpense),14,Color.WHITE));
+        double savingsRate=monthIncome>0?((monthIncome-monthExpense)/monthIncome)*100:0;
+        rate.addView(label("SAVINGS RATE",10,Color.rgb(207,235,217)));
+        rate.addView(bold(monthIncome>0?String.format(Locale.getDefault(),"%.0f%%",savingsRate):"—",14,Color.WHITE));
+        metrics.addView(inc,new LinearLayout.LayoutParams(0,-2,1));
+        metrics.addView(exp,new LinearLayout.LayoutParams(0,-2,1));
+        metrics.addView(rate,new LinearLayout.LayoutParams(0,-2,1));
+        monthCard.addView(metrics);content.addView(monthCard);gap(content,18);
+
+        LinearLayout trend=card();
+        trend.addView(bold("Last 7 days",16,ink));gap(trend,4);
+        trend.addView(label("Daily spending · today included",12,muted));gap(trend,16);
+        double maxDaily=0;for(double v:daily)if(v>maxDaily)maxDaily=v;
+        LinearLayout bars=row();bars.setGravity(Gravity.BOTTOM);
+        for(int i=0;i<7;i++) {
+            LinearLayout day=column();day.setGravity(Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);
+            TextView val=label(daily[i]>0?compactMoney(daily[i]):"—",9,muted);val.setGravity(Gravity.CENTER);
+            day.addView(val);gap(day,6);
+            android.widget.FrameLayout track=new android.widget.FrameLayout(this);
+            track.setBackground(shape(dark?Color.rgb(42,54,46):Color.rgb(237,242,238),8));
+            int barHeight=maxDaily>0?Math.max(5,(int)(68*daily[i]/maxDaily)):5;
+            View fill=new View(this);fill.setBackground(shape(green,8));
+            android.widget.FrameLayout.LayoutParams fp=new android.widget.FrameLayout.LayoutParams(-1,dp(barHeight),Gravity.BOTTOM);
+            track.addView(fill,fp);day.addView(track,lp(22,72));gap(day,7);
+            TextView dayName=label(dayNames[i],10,muted);dayName.setGravity(Gravity.CENTER);day.addView(dayName);
+            bars.addView(day,new LinearLayout.LayoutParams(0,-2,1));
+        }
+        trend.addView(bars);content.addView(trend);gap(content,18);
+
+        LinearLayout categoryCard=card();
+        categoryCard.addView(bold("Where it goes",16,ink));gap(categoryCard,4);
+        categoryCard.addView(label("Top spending categories this month",12,muted));gap(categoryCard,12);
+        java.util.ArrayList<java.util.Map.Entry<String,Double>> ranked=new java.util.ArrayList<>(categories.entrySet());
+        java.util.Collections.sort(ranked,(a,b)->Double.compare(b.getValue(),a.getValue()));
+        if(ranked.isEmpty()) {
+            TextView empty=label("No expenses recorded this month yet.",13,muted);pad(empty,0,14,0,8);categoryCard.addView(empty);
+        } else {
+            double maxCategory=ranked.get(0).getValue();
+            for(int i=0;i<Math.min(5,ranked.size());i++) {
+                java.util.Map.Entry<String,Double> entry=ranked.get(i);
+                LinearLayout lineRow=row();
+                TextView name=bold(entry.getKey(),13,ink);
+                lineRow.addView(name,new LinearLayout.LayoutParams(0,-2,1));
+                lineRow.addView(label(money.format(entry.getValue()),12,ink));
+                categoryCard.addView(lineRow);gap(categoryCard,7);
+                android.widget.FrameLayout track=new android.widget.FrameLayout(this);
+                track.setBackground(shape(dark?Color.rgb(42,54,46):Color.rgb(237,242,238),8));
+                int width=(int)(Math.max(0.04,entry.getValue()/maxCategory)*Math.max(1,(getResources().getDisplayMetrics().widthPixels-dp(100))));
+                View fill=new View(this);fill.setBackground(shape(i==0?green:Color.rgb(105,166,126),8));
+                track.addView(fill,new android.widget.FrameLayout.LayoutParams(width,dp(7),Gravity.LEFT));
+                categoryCard.addView(track,lp(-1,7));gap(categoryCard,12);
+            }
+        }
+        content.addView(categoryCard);gap(content,14);
+        double budgetLimit=getPreferences(MODE_PRIVATE).getFloat("monthly_budget",0f);
+        if(budgetLimit>0) {
+            LinearLayout budget=card();
+            budget.addView(bold("Budget check",16,ink));gap(budget,6);
+            double remaining=budgetLimit-monthExpense;
+            budget.addView(label(remaining>=0?money.format(remaining)+" remaining in your monthly budget":money.format(-remaining)+" over your monthly budget",13,remaining>=0?green:Color.rgb(196,83,77)));
+            gap(budget,10);
+            android.widget.FrameLayout track=new android.widget.FrameLayout(this);
+            track.setBackground(shape(softRed,8));
+            int width=(int)(Math.min(1,monthExpense/budgetLimit)*Math.max(1,(getResources().getDisplayMetrics().widthPixels-dp(100))));
+            View fill=new View(this);fill.setBackground(shape(monthExpense>budgetLimit?Color.rgb(196,83,77):green,8));
+            track.addView(fill,new android.widget.FrameLayout.LayoutParams(width,dp(8),Gravity.LEFT));
+            budget.addView(track,lp(-1,8));content.addView(budget);
+        }
+    }
+
+    private String compactMoney(double value) {
+        if(value>=100000) return String.format(Locale.getDefault(),"%.1fL",value/100000);
+        if(value>=1000) return String.format(Locale.getDefault(),"%.1fk",value/1000);
+        return String.format(Locale.getDefault(),"%.0f",value);
+    }
+
     private void buildSettings() {
         buildTop("Make it yours","Settings","Simple controls. Private by design.");
         LinearLayout appearance=card();
@@ -399,8 +537,8 @@ public class MainActivity extends Activity {
 
     private void buildNav() {
         nav.removeAllViews();
-        String[] names={"Home","Activity","Settings"};
-        String[] icons={"⌂","↕","⚙"};
+        String[] names={"Home","Activity","Insights","Settings"};
+        String[] icons={"⌂","↕","◔","⚙"};
         for(int i=0;i<names.length;i++) {
             final int index=i;
             LinearLayout item=column();item.setGravity(Gravity.CENTER);pad(item,4,5,4,3);
