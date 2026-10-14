@@ -20,9 +20,9 @@
 - [ ] Label transactions as manual or notification-imported.
 - [ ] Add a review path for uncertain imports; make correction and deletion easy.
 - [ ] Detect likely duplicates without silently deleting legitimate repeated payments.
-- [ ] Add transfers between accounts so they do not count as income or spending.
-- [ ] Add transaction notes and reliable timestamps.
-- [ ] Implement local backup and restore with validation and clear overwrite warnings.
+- [x] Add manual transfers between named accounts; exclude them from income, expense, budget, and insight totals.
+- [ ] Add transaction notes and reliable timestamps. (Machine-readable timestamps are stored; user-editable notes remain.)
+- [x] Implement local backup and restore with validation and clear overwrite warnings. (Backups are plain JSON, not encrypted.)
 - [ ] Verify database migrations and preserve existing user data.
 
 **Exit criteria:** No known calculation regressions; backup/restore verified; imports are reviewable; no new sensitive permissions.
