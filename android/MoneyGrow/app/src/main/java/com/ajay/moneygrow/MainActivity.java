@@ -21,6 +21,7 @@ public class MainActivity extends Activity {
     private LinearLayout page, content, nav;
     private TextView balance, incomeValue, expenseValue;
     private int activeTab = 0;
+    private int activityFilter = 0;
     private boolean dark = false;
     private String searchQuery = "";
     private EditText searchBox;
@@ -297,7 +298,19 @@ public class MainActivity extends Activity {
         searchBox.setSingleLine(true); searchBox.setTextSize(14); searchBox.setTextColor(ink);
         searchBox.setHintTextColor(muted); searchBox.setHint("⌕   Search transactions");
         searchBox.setBackground(strokeShape(surface,16,line)); pad(searchBox,14,4,14,4);
-        searchBox.setText(searchQuery); content.addView(searchBox,lp(-1,48)); gap(content,20);
+        searchBox.setText(searchQuery); content.addView(searchBox,lp(-1,48)); gap(content,12);
+        LinearLayout filters=row();
+        String[] filterNames={"All","Expenses","Income"};
+        for(int i=0;i<filterNames.length;i++) {
+            final int chosen=i;
+            TextView chip=pill(filterNames[i],activityFilter==i?softGreen:surface,activityFilter==i?green:muted);
+            chip.setBackground(strokeShape(activityFilter==i?softGreen:surface,24,activityFilter==i?green:line));
+            chip.setOnClickListener(v->{activityFilter=chosen;render();});
+            LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(0,dp(36),1);
+            if(i>0) cp.leftMargin=dp(8);
+            filters.addView(chip,cp);
+        }
+        content.addView(filters);gap(content,18);
         sectionHeader(content,"All transactions","Export CSV",()->exportCsv());
         addTransactionRows(content,Integer.MAX_VALUE,searchQuery);
         searchBox.addTextChangedListener(new TextWatcher() {
@@ -320,6 +333,8 @@ public class MainActivity extends Activity {
                 long transactionId=c.getLong(0);
                 String title=c.getString(1), category=c.getString(4), date=c.getString(5);
                 double amount=c.getDouble(2); boolean isIncome=c.getInt(3)==1;
+                if(activeTab==1 && activityFilter==1 && isIncome) continue;
+                if(activeTab==1 && activityFilter==2 && !isIncome) continue;
                 if (query != null && !query.trim().isEmpty()) {
                     String q=query.toLowerCase(Locale.ROOT);
                     if (!(title.toLowerCase(Locale.ROOT).contains(q) || category.toLowerCase(Locale.ROOT).contains(q) || date.toLowerCase(Locale.ROOT).contains(q))) continue;
