@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
 
 public class TransactionNotificationListener extends NotificationListenerService {
     private static final Pattern AMOUNT = Pattern.compile(
-        "(?i)(?:₹\\\\s*|rs\\\\.?\\\\s*|inr\\\\s*)([0-9][0-9,]*(?:\\\\.[0-9]{1,2})?)"
+        "(?i)(?:₹\\s*|rs\\.?\\s*|inr\\s*)([0-9][0-9,]*(?:\\.[0-9]{1,2})?)"
     );
 
     @Override public void onNotificationPosted(StatusBarNotification sbn) {
