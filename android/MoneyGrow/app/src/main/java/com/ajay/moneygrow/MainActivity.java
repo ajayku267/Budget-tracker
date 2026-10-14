@@ -256,9 +256,10 @@ public class MainActivity extends Activity {
         try {
             while(c.moveToNext()) {
                 String title=c.getString(1), category=c.getString(4), date=c.getString(5), source=c.getString(6);
+                boolean transfer=c.getColumnCount()>8 && c.getInt(8)==1;
                 csv.append(csvCell(date)).append(',').append(csvCell(title)).append(',')
                     .append(String.format(Locale.US,"%.2f",c.getDouble(2))).append(',')
-                    .append(c.getInt(3)==1?"Income":"Expense").append(',')
+                    .append(transfer?"Transfer":(c.getInt(3)==1?"Income":"Expense")).append(',')
                     .append(csvCell(category)).append(',').append(csvCell(source)).append('\n');
             }
         } finally { c.close(); }
@@ -270,6 +271,38 @@ public class MainActivity extends Activity {
     private String csvCell(String value) {
         if(value==null)return "\"\"";
         return "\"" + value.replace("\"","\"\"") + "\"";
+    }
+
+    private void transferDialog() {
+        LinearLayout form=column(); pad(form,4,4,4,0);
+        EditText amount=new EditText(this); amount.setSingleLine(true);
+        amount.setHint("Amount in ₹"); amount.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL); form.addView(amount);
+        EditText from=new EditText(this); from.setSingleLine(true); from.setHint("From account · e.g. Cash"); form.addView(from);
+        EditText to=new EditText(this); to.setSingleLine(true); to.setHint("To account · e.g. Savings"); form.addView(to);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Record a transfer")
+            .setMessage("Transfers are recorded for your timeline but excluded from income, expenses and budget totals.")
+            .setView(form).setNegativeButton("Cancel",null).setPositiveButton("Save transfer",null).create();
+        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b->{
+            double value;
+            try { value=Double.parseDouble(amount.getText().toString().trim()); }
+            catch(Exception e) { amount.setError("Enter a valid amount"); return; }
+            if(value<=0||Double.isInfinite(value)||Double.isNaN(value)) { amount.setError("Amount must be greater than zero"); return; }
+            String source=from.getText().toString().trim(), destination=to.getText().toString().trim();
+            if(source.isEmpty()) { from.setError("Enter the account money leaves"); return; }
+            if(destination.isEmpty()) { to.setError("Enter the account money goes to"); return; }
+            if(source.equalsIgnoreCase(destination)) { to.setError("Choose a different destination"); return; }
+            if(!db.addTransfer(value,source,destination)) { amount.setError("Could not save this transfer"); return; }
+            dialog.dismiss(); render();
+        }));
+        dialog.show();
+    }
+
+    private void transferActions(long id,String title) {
+        new AlertDialog.Builder(this).setTitle(title)
+            .setMessage("This transfer is excluded from income and expense totals.")
+            .setNegativeButton("Close",null)
+            .setPositiveButton("Delete transfer",(d,w)->{db.deleteTransaction(id);render();})
+            .show();
     }
 
     private void transactionActions(long id,String title,double amount,boolean income,String category,boolean needsReview) {
@@ -361,6 +394,7 @@ public class MainActivity extends Activity {
                 String title=c.getString(1), category=c.getString(4), date=c.getString(5);
                 double amount=c.getDouble(2); boolean isIncome=c.getInt(3)==1;
                 boolean needsReview = c.getColumnCount() > 7 && c.getInt(7) == 0;
+                boolean isTransfer = c.getColumnCount() > 8 && c.getInt(8) == 1;
                 if(activeTab==1 && activityFilter==1 && isIncome) continue;
                 if(activeTab==1 && activityFilter==2 && !isIncome) continue;
                 if (query != null && !query.trim().isEmpty()) {
@@ -369,8 +403,8 @@ public class MainActivity extends Activity {
                 }
                 if(count>0) gap(wrap,2);
                 LinearLayout item=row(); pad(item,0,10,0,10);
-                TextView icon = bold(categoryIcon(category),17,isIncome?green:Color.rgb(196,83,77));
-                icon.setGravity(Gravity.CENTER); icon.setBackground(shape(isIncome?softGreen:softRed,15));
+                TextView icon = bold(isTransfer?"↔":categoryIcon(category),17,(isIncome||isTransfer)?green:Color.rgb(196,83,77));
+                icon.setGravity(Gravity.CENTER); icon.setBackground(shape((isIncome||isTransfer)?softGreen:softRed,15));
                 item.addView(icon,lp(44,44));
                 View space=new View(this);item.addView(space,lp(12,1));
                 LinearLayout detail=column();
@@ -378,10 +412,10 @@ public class MainActivity extends Activity {
                 detail.addView(label(category+"  ·  "+date+(needsReview ? "  ·  REVIEW" : ""),11,needsReview?green:muted));
                 item.addView(detail,new LinearLayout.LayoutParams(0,-2,1));
                 LinearLayout amt=column(); amt.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
-                amt.addView(bold((isIncome?"+":"−")+money.format(amount),13,isIncome?green:ink));
-                gap(amt,4); amt.addView(label(isIncome?"Income":"Expense",10,muted));
+                amt.addView(bold((isTransfer?"↔ ":isIncome?"+":"−")+money.format(amount),13,(isIncome||isTransfer)?green:ink));
+                gap(amt,4); amt.addView(label(isTransfer?"Transfer":(isIncome?"Income":"Expense"),10,muted));
                 item.addView(amt);
-                item.setOnClickListener(v -> transactionActions(transactionId,title,amount,isIncome,category,needsReview));
+                item.setOnClickListener(v -> { if (isTransfer) transferActions(transactionId,title); else transactionActions(transactionId,title,amount,isIncome,category,needsReview); });
                 wrap.addView(item); count++;
             }
         } finally { c.close(); }
@@ -429,6 +463,8 @@ public class MainActivity extends Activity {
                 double amount=c.getDouble(2);
                 boolean income=c.getInt(3)==1;
                 String category=c.getString(4);
+                boolean transfer=c.getColumnCount()>8 && c.getInt(8)==1;
+                if (transfer) continue;
                 if(dateText!=null && dateText.contains(month)) {
                     if(income) monthIncome+=amount;
                     else {
@@ -567,6 +603,12 @@ public class MainActivity extends Activity {
         divider(privacy);
         addSettingAction(privacy,"Delete transaction history","Permanently remove all saved entries","Delete",()->deleteDialog());
         content.addView(privacy);gap(content,14);
+
+        LinearLayout movement=card();
+        movement.addView(bold("Money movement",16,ink));gap(movement,5);
+        movement.addView(label("Record money moved between your own accounts without counting it as income or spending.",12,muted));gap(movement,10);
+        addSettingAction(movement,"Record a transfer","Cash, savings, or another account","Add",()->transferDialog());
+        content.addView(movement);gap(content,14);
 
         LinearLayout about=card();about.addView(bold("About MoneyGrow",16,ink));gap(about,7);
         about.addView(label("Version 1.0 · Local-first finance tracker",12,muted));gap(about,12);
